@@ -11,8 +11,9 @@ from .. import models, schemas
 from ..auth import audit, get_current_user
 from ..config import get_settings
 from ..database import get_db
-from ..email import send_otp_email
+from ..email import send_account_exists_email, send_otp_email
 from ..rate_limit import limiter
+from ..rate_limit_db import get_client_ip, rate_limit_ok
 from ..security import (
     create_access_token,
     create_refresh_token,
@@ -25,6 +26,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 
 OTP_PURPOSE = "email_verify"
+
+
+def _enforce_rate_limit(db: Session, request: Request, key: str, max_hits: int, window_seconds: int) -> None:
+    """Serverless-safe rate limit (DB-backed). Raises 429 when exceeded."""
+    if not rate_limit_ok(db, key, max_hits, window_seconds):
+        audit(db, request, "rate_limited", detail=key[:200])
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many requests, please slow down",
+        )
 
 
 def _utcnow() -> datetime:
@@ -97,11 +108,26 @@ def _issue_pair(db: Session, user: models.User) -> schemas.TokenPair:
 @router.post("/register", response_model=schemas.RegisterOut, status_code=status.HTTP_201_CREATED)
 @limiter.limit(settings.register_rate_limit)
 def register(request: Request, payload: schemas.RegisterIn, db: Session = Depends(get_db)):
-    existing = db.query(models.User).filter(models.User.email == payload.email.lower()).first()
-    if existing:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+    ip = get_client_ip(request)
+    _enforce_rate_limit(db, request, f"register:ip:{ip}", settings.rl_register_ip_per_hour, 3600)
+    email = payload.email.lower()
+    # Enumeration-safe: the response is identical whether the email is new,
+    # unverified, or already registered. The real owner learns via email.
+    generic_message = "Check your email for next steps."
+    existing = db.query(models.User).filter(models.User.email == email).first()
+    if existing is not None:
+        if existing.is_verified:
+            send_account_exists_email(existing.email, existing.name)
+        else:
+            _create_and_send_otp(db, request, existing)
+        audit(db, request, "register_existing", existing.id)
+        return schemas.RegisterOut(
+            user=schemas.UserOut.model_validate(existing),
+            otp_required=True,
+            message=generic_message,
+        )
     user = models.User(
-        email=payload.email.lower(),
+        email=email,
         name=payload.name.strip(),
         password_hash=hash_password(payload.password),
         is_verified=False,
@@ -114,13 +140,16 @@ def register(request: Request, payload: schemas.RegisterIn, db: Session = Depend
     return schemas.RegisterOut(
         user=schemas.UserOut.model_validate(user),
         otp_required=True,
-        message="We sent a 6-digit verification code to your email.",
+        message=generic_message,
     )
 
 
 @router.post("/verify-otp", response_model=schemas.TokenPair)
 @limiter.limit(settings.login_rate_limit)
 def verify_otp(request: Request, payload: schemas.OtpVerifyIn, db: Session = Depends(get_db)):
+    _enforce_rate_limit(
+        db, request, f"otpverify:ip:{get_client_ip(request)}", settings.rl_otp_verify_ip_per_minute, 60
+    )
     user = db.query(models.User).filter(models.User.email == payload.email.lower()).first()
     record = _latest_otp(db, user.id) if user else None
     now = _utcnow()
@@ -146,6 +175,9 @@ def verify_otp(request: Request, payload: schemas.OtpVerifyIn, db: Session = Dep
 @router.post("/resend-otp", response_model=schemas.ResendOut)
 @limiter.limit(settings.register_rate_limit)
 def resend_otp(request: Request, payload: schemas.OtpResendIn, db: Session = Depends(get_db)):
+    _enforce_rate_limit(
+        db, request, f"otpresend:ip:{get_client_ip(request)}", settings.rl_otp_resend_ip_per_hour, 3600
+    )
     generic = schemas.ResendOut(
         otp_required=True,
         message="If that email is registered, a new verification code is on its way.",
@@ -181,7 +213,12 @@ def resend_otp(request: Request, payload: schemas.OtpResendIn, db: Session = Dep
 @router.post("/login", response_model=schemas.TokenPair)
 @limiter.limit(settings.login_rate_limit)
 def login(request: Request, payload: schemas.LoginIn, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == payload.email.lower()).first()
+    email = payload.email.lower()
+    ip = get_client_ip(request)
+    # Per-IP and per-email brute-force protection (DB-backed, serverless-safe).
+    _enforce_rate_limit(db, request, f"login:ip:{ip}", settings.rl_login_ip_per_minute, 60)
+    _enforce_rate_limit(db, request, f"login:email:{email}", settings.rl_login_email_per_hour, 3600)
+    user = db.query(models.User).filter(models.User.email == email).first()
     # Constant-time-ish: always run verify to avoid user-enumeration timing leaks.
     candidate_hash = user.password_hash if user else hash_password("dummy-password-for-timing")
     ok = verify_password(payload.password, candidate_hash) and user is not None and user.is_active
@@ -201,14 +238,26 @@ def login(request: Request, payload: schemas.LoginIn, db: Session = Depends(get_
 
 @router.post("/refresh", response_model=schemas.TokenPair)
 def refresh(request: Request, payload: schemas.RefreshIn, db: Session = Depends(get_db)):
+    _enforce_rate_limit(
+        db, request, f"refresh:ip:{get_client_ip(request)}", settings.rl_refresh_ip_per_minute, 60
+    )
     token_hash = hashlib.sha256(payload.refresh_token.encode()).hexdigest()
     record = (
         db.query(models.RefreshToken)
-        .filter(models.RefreshToken.token_hash == token_hash, models.RefreshToken.revoked.is_(False))
+        .filter(models.RefreshToken.token_hash == token_hash)
         .first()
     )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     if record is None or _as_naive_utc(record.expires_at) < now:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
+    if record.revoked:
+        # A revoked-but-known token being reused smells like token theft:
+        # nuke the whole token family so the attacker gains nothing.
+        db.query(models.RefreshToken).filter(
+            models.RefreshToken.user_id == record.user_id
+        ).update({"revoked": True})
+        db.commit()
+        audit(db, request, "refresh_token_reuse", record.user_id)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
     # Rotation: revoke the used token, issue a fresh pair.
     record.revoked = True
