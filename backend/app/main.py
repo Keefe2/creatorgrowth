@@ -1,8 +1,10 @@
-"""CreatorGrowth API — secure creator growth platform backend."""
-import os
-from contextlib import asynccontextmanager
+"""CreatorGrowth API — secure creator growth platform backend.
 
-from fastapi import FastAPI
+Runs anywhere: local uvicorn, a container, or a serverless function.
+Tables are created at import (idempotent); due scheduled posts are published
+opportunistically inside requests (see app/scheduler.py).
+"""
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -12,25 +14,14 @@ from .database import Base, engine
 from .middleware import SecurityHeadersMiddleware
 from .rate_limit import limiter
 from .routers import accounts, analytics, auth, comments, content
-from .scheduler import publish_due_posts, start_scheduler
+from .scheduler import maybe_publish_due
 
 settings = get_settings()
 
+# Idempotent: safe to run on every cold start / import.
+Base.metadata.create_all(bind=engine)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
-    scheduler = None
-    if os.environ.get("TESTING") != "1":
-        scheduler = start_scheduler()
-        # Catch up anything that became due while the server was down.
-        publish_due_posts()
-    yield
-    if scheduler is not None:
-        scheduler.shutdown(wait=False)
-
-
-app = FastAPI(title=settings.app_name, version="1.0.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="1.0.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -43,6 +34,15 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
     max_age=600,
 )
+
+
+@app.middleware("http")
+async def auto_publish_middleware(request: Request, call_next):
+    # Serverless-safe scheduler: publish due posts at most once a minute,
+    # piggybacking on real traffic instead of a background thread.
+    maybe_publish_due()
+    return await call_next(request)
+
 
 app.include_router(auth.router)
 app.include_router(accounts.router)
