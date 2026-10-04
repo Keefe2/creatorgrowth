@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext.jsx'
 import Layout from './components/Layout.jsx'
 import Login from './pages/Login.jsx'
 import Register from './pages/Register.jsx'
+import VerifyOtp from './pages/VerifyOtp.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Studio from './pages/Studio.jsx'
 import Accounts from './pages/Accounts.jsx'
@@ -20,6 +21,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/verify" element={<VerifyOtp />} />
       <Route
         path="/*"
         element={
