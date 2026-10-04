@@ -45,7 +45,14 @@ def _migrate_is_verified_column() -> None:
 
 _migrate_is_verified_column()
 
-app = FastAPI(title=settings.app_name, version="1.0.0")
+app = FastAPI(
+    title=settings.app_name,
+    version="1.0.0",
+    # Never expose interactive API docs / schema in production (info disclosure).
+    docs_url=None if settings.is_prod else "/docs",
+    redoc_url=None if settings.is_prod else "/redoc",
+    openapi_url=None if settings.is_prod else "/openapi.json",
+)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
