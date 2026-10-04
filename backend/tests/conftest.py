@@ -18,6 +18,14 @@ from sqlalchemy.pool import StaticPool
 from app import models
 from app.database import Base, get_db
 from app.main import app
+from app.routers import auth as auth_router
+
+
+@pytest.fixture()
+def fixed_otp(monkeypatch):
+    """Pin OTP generation to a known code so tests can verify."""
+    monkeypatch.setattr(auth_router, "_generate_otp_code", lambda: "123456")
+    return "123456"
 
 
 @pytest.fixture()
@@ -50,13 +58,16 @@ def client(db_session):
 
 
 @pytest.fixture()
-def user_token(client):
+def user_token(client, fixed_otp):
+    """A fully verified user: register -> verify OTP -> token pair."""
     r = client.post(
         "/auth/register",
         json={"email": "test@example.com", "name": "Tester", "password": "StrongPass123!"},
     )
     assert r.status_code == 201, r.text
-    data = r.json()
+    v = client.post("/auth/verify-otp", json={"email": "test@example.com", "otp": fixed_otp})
+    assert v.status_code == 200, v.text
+    data = v.json()
     return data["access_token"], data["refresh_token"]
 
 
