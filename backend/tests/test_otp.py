@@ -20,7 +20,8 @@ def _register(client, email="otp@example.com"):
 def test_register_returns_201_with_otp_required_and_no_tokens(client, fixed_otp):
     data = _register(client)
     assert data["otp_required"] is True
-    assert "verification code" in data["message"].lower()
+    # Generic message (identical for new and existing emails — no enumeration).
+    assert data["message"] == "Check your email for next steps."
     assert data["user"]["email"] == "otp@example.com"
     assert "access_token" not in data
     assert "refresh_token" not in data
