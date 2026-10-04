@@ -45,8 +45,12 @@ export default function Login() {
     try {
       await login(email.trim(), password)
       navigate('/')
-    } catch {
-      setError('Invalid email or password.')
+    } catch (err) {
+      if (err.response?.status === 403 && err.response?.data?.detail === 'email_not_verified') {
+        navigate('/verify', { state: { email: email.trim() } })
+      } else {
+        setError('Invalid email or password.')
+      }
     } finally {
       setBusy(false)
     }
