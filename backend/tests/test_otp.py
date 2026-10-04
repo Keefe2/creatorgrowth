@@ -141,3 +141,23 @@ def test_otp_never_stored_in_plaintext(client, db_session, fixed_otp):
     record = db_session.query(models.EmailOTP).one()
     assert record.otp_hash != fixed_otp
     assert len(record.otp_hash) == 64  # SHA256 hex
+
+
+def test_as_naive_utc_handles_postgres_aware_datetimes():
+    """Regression: Postgres timestamptz columns come back tz-aware; the
+    codebase compares naive UTC. _as_naive_utc must normalize both."""
+    from datetime import timezone as tz
+    from app.routers.auth import _as_naive_utc, _utcnow
+
+    aware = datetime.now(tz.utc)
+    naive = _as_naive_utc(aware)
+    assert naive.tzinfo is None
+    # Same instant, comparisons must not raise and must be correct.
+    assert naive <= _utcnow() + timedelta(seconds=5)
+    assert naive >= _utcnow() - timedelta(seconds=5)
+    # Naive input passes through untouched.
+    plain = datetime(2026, 1, 1, 12, 0, 0)
+    assert _as_naive_utc(plain) == plain
+    # Non-UTC aware input converts to UTC first.
+    plus5 = datetime(2026, 1, 1, 17, 0, 0, tzinfo=tz(timedelta(hours=5)))
+    assert _as_naive_utc(plus5) == datetime(2026, 1, 1, 12, 0, 0)
