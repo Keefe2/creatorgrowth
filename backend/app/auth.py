@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from . import models
 from .database import get_db
+from .rate_limit_db import get_client_ip
 from .security import decode_access_token
 
 _bearer = HTTPBearer(auto_error=False)
@@ -28,7 +29,8 @@ def get_current_user(
 
 
 def audit(db: Session, request: Request, action: str, user_id: int | None = None, detail: str = "") -> None:
-    ip = request.client.host if request.client else ""
+    # Proxy-aware client IP (X-Forwarded-For last entry on Vercel's edge).
+    ip = get_client_ip(request)
     # Never log secrets: truncate detail defensively.
     db.add(models.AuditLog(user_id=user_id, action=action, detail=detail[:500], ip=ip))
     db.commit()
