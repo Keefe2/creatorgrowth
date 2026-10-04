@@ -39,6 +39,26 @@ class TokenPair(BaseModel):
     user: UserOut
 
 
+class OtpVerifyIn(BaseModel):
+    email: EmailStr
+    otp: str = Field(pattern=r"^\d{6}$")
+
+
+class OtpResendIn(BaseModel):
+    email: EmailStr
+
+
+class RegisterOut(BaseModel):
+    user: UserOut
+    otp_required: bool = True
+    message: str
+
+
+class ResendOut(BaseModel):
+    otp_required: bool
+    message: str
+
+
 # ---------- Social accounts ----------
 class SocialAccountIn(BaseModel):
     platform: Platform
