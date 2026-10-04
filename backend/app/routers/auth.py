@@ -32,6 +32,18 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _as_naive_utc(dt: datetime) -> datetime:
+    """Normalize a datetime to naive UTC for Python-side comparisons.
+
+    Postgres timestamptz columns come back timezone-aware (psycopg3), while
+    this codebase uses naive UTC everywhere (SQLite drops tzinfo). Without
+    this, `aware < naive` raises TypeError on Postgres but works on SQLite.
+    """
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def _generate_otp_code() -> str:
     # 6 digits, no leading zero: 100000..999999.
     return f"{secrets.randbelow(900000) + 100000}"
@@ -112,7 +124,7 @@ def verify_otp(request: Request, payload: schemas.OtpVerifyIn, db: Session = Dep
     user = db.query(models.User).filter(models.User.email == payload.email.lower()).first()
     record = _latest_otp(db, user.id) if user else None
     now = _utcnow()
-    if user is None or record is None or record.expires_at < now:
+    if user is None or record is None or _as_naive_utc(record.expires_at) < now:
         # Generic message: do not reveal whether the email exists.
         audit(db, request, "otp_failed", user.id if user else None)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code")
@@ -146,7 +158,7 @@ def resend_otp(request: Request, payload: schemas.OtpResendIn, db: Session = Dep
         return schemas.ResendOut(otp_required=False, message="Email already verified. Please log in.")
     latest = _latest_otp(db, user.id)
     if latest is not None:
-        age = (_utcnow() - latest.created_at).total_seconds()
+        age = (_utcnow() - _as_naive_utc(latest.created_at)).total_seconds()
         if age < settings.otp_resend_cooldown_seconds:
             raise HTTPException(
                 status.HTTP_429_TOO_MANY_REQUESTS,
@@ -196,7 +208,7 @@ def refresh(request: Request, payload: schemas.RefreshIn, db: Session = Depends(
         .first()
     )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    if record is None or record.expires_at < now:
+    if record is None or _as_naive_utc(record.expires_at) < now:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
     # Rotation: revoke the used token, issue a fresh pair.
     record.revoked = True
