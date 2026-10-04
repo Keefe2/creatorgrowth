@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     login_rate_limit: str = "5/minute"
     register_rate_limit: str = "10/hour"
 
+    # Serverless-safe DB rate limits (slowapi's in-memory counters do not
+    # survive across serverless instances). Applied on top of slowapi.
+    rl_login_ip_per_minute: int = 5
+    rl_login_email_per_hour: int = 20
+    rl_register_ip_per_hour: int = 10
+    rl_otp_verify_ip_per_minute: int = 15
+    rl_otp_resend_ip_per_hour: int = 10
+    rl_refresh_ip_per_minute: int = 60
+
     # Email OTP verification
     smtp_host: str = ""
     smtp_port: int = 587
