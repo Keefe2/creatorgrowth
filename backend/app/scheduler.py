@@ -1,10 +1,14 @@
-"""Background scheduler: publishes due scheduled posts every 60 seconds."""
+"""Due-post publishing, serverless-safe.
+
+Instead of a background thread (which cannot exist on serverless platforms),
+due posts are published opportunistically inside API requests, at most once
+every 60 seconds per process. Local dev keeps working the same way.
+"""
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
-
-from apscheduler.schedulers.background import BackgroundScheduler
 
 from . import models
 from .database import SessionLocal
@@ -13,9 +17,12 @@ from .security import decrypt_token
 
 logger = logging.getLogger(__name__)
 
+PUBLISH_INTERVAL_SECONDS = 60
+_last_run: float = 0.0
+
 
 def _utcnow() -> datetime:
-    # Naive UTC: matches what SQLite returns for stored datetimes.
+    # Naive UTC: matches what SQLite/Postgres return for stored datetimes.
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
@@ -77,8 +84,14 @@ def publish_due_posts(db=None) -> int:
     return published
 
 
-def start_scheduler() -> BackgroundScheduler:
-    scheduler = BackgroundScheduler(timezone="UTC")
-    scheduler.add_job(publish_due_posts, "interval", seconds=60, id="publish_due_posts", max_instances=1)
-    scheduler.start()
-    return scheduler
+def maybe_publish_due() -> None:
+    """Run publish_due_posts() at most once per PUBLISH_INTERVAL_SECONDS."""
+    global _last_run
+    now = time.time()
+    if now - _last_run < PUBLISH_INTERVAL_SECONDS:
+        return
+    _last_run = now
+    try:
+        publish_due_posts()
+    except Exception:
+        logger.exception("Opportunistic auto-publish failed")
