@@ -21,6 +21,30 @@ settings = get_settings()
 # Idempotent: safe to run on every cold start / import.
 Base.metadata.create_all(bind=engine)
 
+
+def _migrate_is_verified_column() -> None:
+    """Add users.is_verified on databases created before email OTP verification.
+
+    Idempotent and dialect-agnostic (SQLite dev + Postgres prod). Any failure
+    is logged, never raised, so startup can never crash because of this.
+    """
+    import logging
+
+    from sqlalchemy import inspect, text
+
+    logger = logging.getLogger(__name__)
+    try:
+        columns = [c["name"] for c in inspect(engine).get_columns("users")]
+        if "is_verified" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT FALSE"))
+            logger.info("Migrated: added users.is_verified")
+    except Exception:
+        logger.exception("is_verified migration failed (continuing startup)")
+
+
+_migrate_is_verified_column()
+
 app = FastAPI(title=settings.app_name, version="1.0.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
