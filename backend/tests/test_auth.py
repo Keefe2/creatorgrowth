@@ -8,11 +8,13 @@ def test_register_and_me(client, user_token, auth_headers):
 
 
 def test_register_duplicate_email(client, user_token):
+    # Enumeration-safe: re-registering returns the SAME 201 as a fresh register.
     r = client.post(
         "/auth/register",
         json={"email": "test@example.com", "name": "Dup", "password": "StrongPass123!"},
     )
-    assert r.status_code == 409
+    assert r.status_code == 201
+    assert r.json()["message"] == "Check your email for next steps."
 
 
 def test_register_weak_password_rejected(client):
@@ -36,9 +38,10 @@ def test_refresh_rotation(client, user_token):
     # Old refresh token must now be dead (rotation).
     r2 = client.post("/auth/refresh", json={"refresh_token": refresh})
     assert r2.status_code == 401
-    # New one works.
+    # Reuse of a revoked token = suspected theft -> whole family is nuked,
+    # so even the legitimately rotated token no longer works.
     r3 = client.post("/auth/refresh", json={"refresh_token": new_refresh})
-    assert r3.status_code == 200
+    assert r3.status_code == 401
 
 
 def test_logout_revokes(client, user_token):
