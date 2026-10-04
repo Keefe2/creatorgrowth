@@ -131,3 +131,14 @@ class AuditLog(Base):
     detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ip: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+class RateLimitHit(Base):
+    """Serverless-safe rate-limit counters. slowapi's in-memory counters do
+    not survive across serverless instances; these live in the database."""
+
+    __tablename__ = "rate_limit_hits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False, index=True)
