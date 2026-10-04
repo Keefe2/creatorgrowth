@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
 
   const register = async (name, email, password) => {
     const { data } = await api.post('/auth/register', { name, email, password })
-    saveSession(data)
+    return data
   }
 
   const logout = async () => {
@@ -48,5 +48,5 @@ export function AuthProvider({ children }) {
     }
   }
 
-  return <AuthCtx.Provider value={{ user, loading, login, register, logout }}>{children}</AuthCtx.Provider>
+  return <AuthCtx.Provider value={{ user, loading, login, register, logout, saveSession }}>{children}</AuthCtx.Provider>
 }
