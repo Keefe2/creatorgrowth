@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     login_rate_limit: str = "5/minute"
     register_rate_limit: str = "10/hour"
 
+    # Email OTP verification
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    otp_ttl_minutes: int = 10
+    otp_max_attempts: int = 5
+    otp_resend_cooldown_seconds: int = 60
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
