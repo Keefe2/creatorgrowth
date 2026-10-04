@@ -20,7 +20,14 @@
 3. **Vercel → Add New Project → Import** `Keefe2/creatorgrowth`
    - Framework: Vite (auto) — build command & output dir come from `vercel.json`
    - Env vars: `DATABASE_URL` (Supabase), `JWT_SECRET` (random), `ENCRYPTION_KEY` (random Fernet key), `ENV=prod`
-4. **Deploy** → open the URL → register → done
+   - **Email OTP**: registration sends a 6-digit verification code via SMTP. Set these Vercel env vars or
+     emails won't send (dev fallback logs the code to the server console):
+     - `SMTP_HOST` (e.g. `smtp.gmail.com`), `SMTP_PORT` (default 587)
+     - `SMTP_USER` (full email), `SMTP_PASSWORD` (Gmail **app password**, not your login password)
+     - `SMTP_FROM` (sender address, defaults to `SMTP_USER`)
+     - Optional tuning: `OTP_TTL_MINUTES` (default 10), `OTP_MAX_ATTEMPTS` (default 5),
+       `OTP_RESEND_COOLDOWN_SECONDS` (default 60)
+4. **Deploy** → open the URL → register → enter the emailed code → done
 
 ## Notes
 - Serverless sleeps when idle: first request after idle takes a few seconds (normal on free tier)
