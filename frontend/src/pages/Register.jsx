@@ -18,8 +18,9 @@ export default function Register() {
     setBusy(true)
     setError('')
     try {
-      await register(name.trim(), email.trim(), password)
-      navigate('/')
+      const trimmedEmail = email.trim()
+      await register(name.trim(), trimmedEmail, password)
+      navigate('/verify', { state: { email: trimmedEmail } })
     } catch (err) {
       setError(err.response?.status === 409 ? 'Email already registered.' : 'Registration failed. Try again.')
     } finally {
